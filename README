@@ -1,41 +1,42 @@
-# mod_prison : FreeBSD only module for Apache 2.4 http server (and maybe 2.2) #
+mod_prison : FreeBSD only module for Apache 2.4 http server (and maybe 2.2) 
 
 Unlike jail-patch, this module create an unique jail for all 
 Apache childs. Main process still unjailed like with mod_unixd 
 sothat you don't need anything except Documents inside the jail.
 
-## Install ##
+INSTALL
 
 You need a FreeBSD version that supports libjail (> 7.2).
 ldconfig -r | grep jail
 
 Then you can do 
 
-```make install```
+make install
 
 You can specify apxs PATH when building
 
-```make APXS=/usr/local/httpd/bin/apxs install```
+make APXS=/usr/local/httpd/bin/apxs install
 
 You can enforce security settings via setting JAIL_PARANOID
 
-```make -DJAIL_PARANOID install```
+make -DJAIL_PARANOID install
 
-## Usage ##
+USAGE
 
 Now you can set in global config :
 
-_JailDir_ : the directory we will be jailed on
-DocumentRoot must be relative to this path so you must use ```httpd -T``` 
+1) JailDir : the directory we will be jailed on
+DocumentRoot must be relative to this path so you must use httpd -T 
 to start Apache. If JAIL_PARANOID is set at compile time, JailDir must be
 owned by root and not be world or group writable.
 
-_JailIP_  : A single ipv4 or ipv6 string repersentation.
+2) JailIP : A single ipv4 or ipv6 string repersentation.
 If JAIL_PARANOID is set you can't use INADDR_ANY (0.0.0.0).
 
-_JailSecurity_ : None|ALL|IPC
+3) JailSecurity : None|ALL|IPC
 
-None : security settings are inherit from the system.
+NONE : security settings are inherit from the system.
+
 ALL : 
 - securelevel : 3
 - enforce_statfs : 2
@@ -46,12 +47,14 @@ ALL :
 - allow.quotas : 0
 - allow.socket_af : 0
 - allow.sysvipc : 0
+
 IPC : like all but allow.sysvipc is set.
 
-## Bugs and status ##
+BUGS AND STATUS
 
-This is a really alpha software. It brakes graceful restart (```httpd -k graceful```)
+This is a really alpha software. It brakes graceful restart (httpd -k graceful)
 
-## See ##
+SEE ALSO
+
 http://code.google.com/p/mod-jail/
 
