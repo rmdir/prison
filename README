@@ -11,15 +11,15 @@ ldconfig -r | grep jail
 
 Then you can do 
 
-```make && make install```
+```make install```
 
 You can specify apxs PATH when building
 
-```make APXS=/usr/local/httpd/bin/apxs all install```
+```make APXS=/usr/local/httpd/bin/apxs install```
 
 You can enforce security settings via setting JAIL_PARANOID
 
-```make -DJAIL_PARANOID && make install```
+```make -DJAIL_PARANOID install```
 
 ## Usage ##
 

@@ -31,13 +31,15 @@ FLAGS+=		-DJAIL_PARANOID
 
 SRC=		mod_prison.c
 
-all: 
+all: build
+
+build:
 	${APXS} -c ${FLAGS} ${SRC}
 
-install: 
-	${APXS} -i ${SRC}
+install: build
+	${APXS} -c -i ${FLAGS} ${SRC}
 
 clean:
-	rm -f *.o *.lo *.slo *.la 
+	rm -rf *.o *.lo *.slo *.la .libs .deps
 
 
