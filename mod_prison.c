@@ -392,7 +392,7 @@ static void
 prison_hooks(apr_pool_t *pool)
 {
     ap_hook_pre_config(prison_pre_config, NULL, NULL, APR_HOOK_MIDDLE);
-    ap_hook_drop_privileges(prison_drop_privileges, NULL, NULL, APR_HOOK_MIDDLE); 
+    ap_hook_drop_privileges(prison_drop_privileges, NULL, NULL, APR_HOOK_FIRST); 
     ap_hook_post_config(prison_post_config, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
