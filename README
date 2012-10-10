@@ -85,6 +85,62 @@ joris    httpd      56824 3  tcp4 6 *:8088                *:*
 joris    httpd      56824 4  tcp4   *:*                   *:*
 joris    httpd      56823 3  tcp4 6 *:8088                *:*
 joris    httpd      56823 4  tcp4   *:*                   *:*
+# curl -i http://www.rmdir.fr:8088/sysctl.cgi
+HTTP/1.1 200 OK
+Date: Wed, 10 Oct 2012 16:24:38 GMT
+Server: Apache/2.4.3 (Unix)
+Transfer-Encoding: chunked
+Content-Type: text/plain
+
+
+security.jail.jailed: 1
+security.jail.jail_max_af_ips: 255
+security.jail.set_hostname_allowed: 0
+security.jail.socket_unixiproute_only: 1
+security.jail.sysvipc_allowed: 1
+security.jail.allow_raw_sockets: 0
+security.jail.chflags_allowed: 0
+security.jail.mount_allowed: 0
+security.jail.mount_devfs_allowed: 0
+security.jail.mount_nullfs_allowed: 0
+security.jail.mount_procfs_allowed: 0
+security.jail.mount_zfs_allowed: 0
+security.jail.enforce_statfs: 2
+security.jail.devfs_ruleset: 0
+security.jail.param.jid: 0
+security.jail.param.parent: 0
+security.jail.param.name: 256
+security.jail.param.path: 1024
+security.jail.param.securelevel: 0
+security.jail.param.enforce_statfs: 0
+security.jail.param.devfs_ruleset: 0
+security.jail.param.persist: 0
+security.jail.param.vnet: 0
+security.jail.param.dying: 0
+security.jail.param.children.cur: 0
+security.jail.param.children.max: 0
+security.jail.param.host.: 0
+security.jail.param.host.hostname: 256
+security.jail.param.host.domainname: 256
+security.jail.param.host.hostuuid: 64
+security.jail.param.host.hostid: 0
+security.jail.param.cpuset.id: 0
+security.jail.param.ip4.: 0
+security.jail.param.ip4.saddrsel: 0
+security.jail.param.ip6.: 0
+security.jail.param.ip6.saddrsel: 0
+security.jail.param.allow.set_hostname: 0
+security.jail.param.allow.sysvipc: 0
+security.jail.param.allow.raw_sockets: 0
+security.jail.param.allow.chflags: 0
+security.jail.param.allow.quotas: 0
+security.jail.param.allow.socket_af: 0
+security.jail.param.allow.mount.: 0
+security.jail.param.allow.mount.devfs: 0
+security.jail.param.allow.mount.nullfs: 0
+security.jail.param.allow.mount.procfs: 0
+security.jail.param.allow.mount.zfs: 0
+kern.securelevel: 3
 
 
 
