@@ -71,7 +71,7 @@ typedef struct {
 	char *name;
 } current_jail;
 
-#define WAIT_CHILD_TIMEOUT 1000000
+#define WAIT_CHILD_TIMEOUT 10000
 
 #define SEC_NONE	0
 #define SEC_ALL		1
