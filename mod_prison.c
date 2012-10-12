@@ -41,6 +41,7 @@
 #if defined(__FreeBSD_version) && (__FreeBSD_version >= 720000)
 
 #include <sys/param.h>
+#include <sys/cpuset.h>
 #include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
@@ -49,9 +50,10 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
+#include <ctype.h>
+#include <jail.h>
 #include <unistd.h>
 #include <pwd.h>
-#include <jail.h>
 
 #else 
 #error "Only for FreeBSD > 7.2"
@@ -64,6 +66,7 @@ typedef struct {
 	int ip_version;
 	char *ip;
 	int security;
+	cpuset_t *cpu;
 } prison_config;
 
 typedef struct {
@@ -115,41 +118,108 @@ _prison_launch_child_waiter(void)
 
 		jailparam_set(params, 2, JAIL_UPDATE); 
 		jailparam_free(params, 2);
-
-		break;
-		
+		exit(0);
 	}
 }
+
+static const char *
+_prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
+{
+	char *end;
+	enum { OTHER, RANGE };
+        int next = OTHER, cpu, previous, num = 0;  
+
+	const char *err = ap_check_cmd_context(cmd, GLOBAL_ONLY);
+	if (err != NULL) {
+		return err;
+	}
+	CPU_ZERO(ap_prison_config.cpu);
+	while(*arg != '\0' && isdigit(*arg)) {
+		cpu = (int) strtol(arg, &end, 10);
+
+		if (cpu < 0) {
+			ap_prison_config.cpu = NULL;
+			return "CPU id can't be negative";
+		}
+		if (cpu > CPU_SETSIZE) {
+			ap_prison_config.cpu = NULL;
+			return "CPU id too hight";
+		}
+
+		switch (next) {
+		case OTHER:
+			CPU_SET(cpu, ap_prison_config.cpu);
+			previous = cpu;
+			previous++; num++;
+			break;
+
+		case RANGE:
+			if (previous > cpu) {
+				ap_prison_config.cpu = NULL;
+				return "Invalid CPU range";
+			}
+			while (previous <= cpu) {
+				CPU_SET(cpu, ap_prison_config.cpu);
+				previous++; num++;
+			}
+		}
+
+		arg = end;
+		switch (*arg) {
+		case ',':
+			next = OTHER;
+			arg++;
+			break;
+
+		case '-':
+			next = RANGE;
+			arg++;
+			break;
+
+		case '\0':
+			break;
+
+		default :
+			ap_prison_config.cpu = NULL;
+			return "Invalid character in cpu list";
+
+		}
+	}
+	if (num == 0) {
+		ap_prison_config.cpu = NULL;
+		return "No CPU found in JailCPU";
+	}
+	return NULL;
+}
+
 
 static const char * 
 _prison_set_path(cmd_parms *cmd, void *dummy, const char *arg)
 {
-	const char *err = ap_check_cmd_context(cmd, GLOBAL_ONLY);
 #ifdef JAIL_PARANOID
 	struct stat st;
 #endif /* JAIL_PARANOID */
 
+	const char *err = ap_check_cmd_context(cmd, GLOBAL_ONLY);
 	if (err != NULL) {
     		return err;
 	}
-	ap_prison_config.path = (char *) arg;
 
 #ifdef JAIL_PARANOID
-	if (stat(ap_prison_config.path, &st) == -1 || 
+	if (stat(arg, &st) == -1 || 
 	    (S_ISDIR(st.st_mode) == 0))
     		return "JailDir must be a valid directory";
 	if (st.st_uid != 0 || (st.st_mode & (S_IWGRP|S_IWOTH)) != 0)
 		return "JailDir must be owned by root and not group "
 		    "or world writable";
 #else 
-
 	if (!ap_is_directory(cmd->pool, arg)) {
     		return "JailDir must be a valid directory";
 	}
-
 #endif /* JAIL_PARANOID */
 
-return NULL;
+	ap_prison_config.path = (char *) arg;
+	return NULL;
 }
 
 static const char *
@@ -216,6 +286,7 @@ prison_pre_config(apr_pool_t *pconf, apr_pool_t *plog,
                  apr_pool_t *ptemp)
 {
 	ap_prison_config.path = NULL;
+	ap_prison_config.cpu = apr_pcalloc(pconf, sizeof(cpuset_t));
 	return OK;
 }
 
@@ -357,6 +428,16 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 				 s->server_hostname);
 		return rv;
 	}
+
+	/* cpuset */
+	if (ap_prison_config.cpu != NULL && cpuset_setaffinity(
+	    		CPU_LEVEL_WHICH, CPU_WHICH_JAIL, cj->jid,
+			sizeof(ap_prison_config.cpu), ap_prison_config.cpu) != 0) {
+		rv = errno;
+		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, "cpuset faild");
+	}
+
+
 	_prison_launch_child_waiter();
 	return OK;
 }
@@ -403,6 +484,8 @@ static const command_rec prison_cmds[] = {
                   "The ip within the jail"),
     AP_INIT_TAKE1("JailSecurity", _prison_set_security, NULL, RSRC_CONF, 
                   "System security within the jail (None, All, IPC)"),
+    AP_INIT_TAKE1("JailCPU", _prison_set_cpu, NULL, RSRC_CONF, 
+                  "List of CPU the jail will be restrict on"),
     {NULL}
 };
 

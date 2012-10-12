@@ -52,10 +52,17 @@ ALL :
 
 IPC : like all but allow.sysvipc is set.
 
+4) JailCPU : the cpu set of the jail.
+You can write cpusets like with cpuset(1) :
+- a single cpu. Eg. 1
+- a list of cpu. Eg 1,4,6
+- a cpu range. Eg 8-10 means 8,9,10
+
 EXAMPLE
 # grep Jail conf/httpd.conf
 JailDir /usr/local/httpd/htdocs
 JailIP ::1
+JailCPU 1
 JailSecurity IPC
 # ./bin/httpd -T
 # jls jid name host.hostname ip4.addr ip6.addr path
@@ -85,6 +92,8 @@ joris    httpd      56824 3  tcp4 6 *:8088                *:*
 joris    httpd      56824 4  tcp4   *:*                   *:*
 joris    httpd      56823 3  tcp4 6 *:8088                *:*
 joris    httpd      56823 4  tcp4   *:*                   *:*
+# cpuset -g -j 158
+jail 158 mask: 1
 # curl -i http://www.rmdir.fr:8088/sysctl.cgi
 HTTP/1.1 200 OK
 Date: Wed, 10 Oct 2012 16:24:38 GMT
