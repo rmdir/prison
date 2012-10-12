@@ -61,12 +61,16 @@
 #endif /* __FreeBSD_version */
 
 
+typedef enum { ALL, SET } cs_type;
+typedef enum { NONE, SECURE, IPC } sec_type;
+
 typedef struct {
 	char *path;
 	int ip_version;
 	char *ip;
-	int security;
-	cpuset_t *cpu;
+	sec_type security;
+	cs_type cpuset;
+	cpuset_t *cpumask;
 } prison_config;
 
 typedef struct {
@@ -75,10 +79,6 @@ typedef struct {
 } current_jail;
 
 #define WAIT_CHILD_TIMEOUT 10000
-
-#define SEC_NONE	0
-#define SEC_ALL		1
-#define SEC_IPC		2
 
 prison_config ap_prison_config; 
 current_jail *cj;
@@ -133,33 +133,34 @@ _prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
 	if (err != NULL) {
 		return err;
 	}
-	CPU_ZERO(ap_prison_config.cpu);
+	CPU_ZERO(ap_prison_config.cpumask);
 	while(*arg != '\0' && isdigit(*arg)) {
 		cpu = (int) strtol(arg, &end, 10);
 
 		if (cpu < 0) {
-			ap_prison_config.cpu = NULL;
+			ap_prison_config.cpuset = ALL;
 			return "CPU id can't be negative";
 		}
 		if (cpu > CPU_SETSIZE) {
-			ap_prison_config.cpu = NULL;
+			ap_prison_config.cpuset = ALL;
 			return "CPU id too hight";
 		}
 
 		switch (next) {
 		case OTHER:
-			CPU_SET(cpu, ap_prison_config.cpu);
+			CPU_SET(cpu, ap_prison_config.cpumask);
+			ap_prison_config.cpuset = SET;
 			previous = cpu;
 			previous++; num++;
 			break;
 
 		case RANGE:
 			if (previous > cpu) {
-				ap_prison_config.cpu = NULL;
 				return "Invalid CPU range";
 			}
 			while (previous <= cpu) {
-				CPU_SET(cpu, ap_prison_config.cpu);
+				CPU_SET(cpu, ap_prison_config.cpumask);
+				ap_prison_config.cpuset = SET;
 				previous++; num++;
 			}
 		}
@@ -180,13 +181,13 @@ _prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
 			break;
 
 		default :
-			ap_prison_config.cpu = NULL;
+			ap_prison_config.cpuset = ALL;
 			return "Invalid character in cpu list";
 
 		}
 	}
 	if (num == 0) {
-		ap_prison_config.cpu = NULL;
+		ap_prison_config.cpuset = ALL;
 		return "No CPU found in JailCPU";
 	}
 	return NULL;
@@ -232,11 +233,11 @@ _prison_set_ip(cmd_parms *cmd, void *dummy, const char *arg)
 		return err;
 	}
 	if (inet_pton(AF_INET, arg,  &(sa.sin_addr)) == 1) {
-		ap_prison_config.ip_version = 4;
+		ap_prison_config.ip_version = AF_INET;
 		ap_prison_config.ip = (char *) arg;
 	}
 	else if (inet_pton(AF_INET6, arg,  &(sa6.sin6_addr)) == 1) {
-		ap_prison_config.ip_version = 6;
+		ap_prison_config.ip_version = AF_INET6;
 		ap_prison_config.ip = (char *) arg;
 	}
 	else {
@@ -258,15 +259,14 @@ _prison_set_security(cmd_parms *cmd, void *dummy, const char *arg)
 	if (err != NULL) {
 		return err;
 	}
-	ap_prison_config.security = SEC_ALL;
 	if (apr_strnatcasecmp("None", arg) == 0) {
-		ap_prison_config.security = SEC_NONE;
+		ap_prison_config.security = NONE;
 	}
 	else if (apr_strnatcasecmp("All", arg) == 0) {
-		ap_prison_config.security = SEC_ALL;
+		ap_prison_config.security = SECURE;
 	}
 	else if (apr_strnatcasecmp("IPC", arg) == 0) {
-		ap_prison_config.security = SEC_IPC;
+		ap_prison_config.security = IPC;
 	}
 	else {
 		return "JailSecurity should be one of All, None or IPC";
@@ -286,7 +286,10 @@ prison_pre_config(apr_pool_t *pconf, apr_pool_t *plog,
                  apr_pool_t *ptemp)
 {
 	ap_prison_config.path = NULL;
-	ap_prison_config.cpu = apr_pcalloc(pconf, sizeof(cpuset_t));
+	ap_prison_config.ip_version = AF_UNSPEC;
+	ap_prison_config.security = SECURE;
+	ap_prison_config.cpumask = apr_pcalloc(pconf, sizeof(cpuset_t));
+	ap_prison_config.cpuset = ALL;
 	return OK;
 }
 
@@ -349,7 +352,7 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 		return EEXIST;
 	}
 
-		/* jail name does not support dots */
+	/* jail name does not support dots */
 	for (i = 0; i < len ; i++) {
 		switch (s->server_hostname[i]) {
 		case '.': 
@@ -358,7 +361,8 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 		default:
 				cj->name[i] = s->server_hostname[i];
 		}
-	}/* Let's create a new jail */
+	}
+	/* Let's create a new jail */
 	i = 0;	
 	jailparam_init(&params[i], "name");
 	jailparam_import(&params[i], cj->name);
@@ -371,19 +375,19 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 	i++;
 	jailparam_init(&params[i], "persist");
 	jailparam_import(&params[i], NULL);
-	if (ap_prison_config.ip_version == 4) {
+	if (ap_prison_config.ip_version == AF_INET) {
 		i++;
 		jailparam_init(&params[i], "ip4.addr");
 		jailparam_import(&params[i], ap_prison_config.ip);
 	}
-	if (ap_prison_config.ip_version == 6) {
+	if (ap_prison_config.ip_version == AF_INET6) {
 		i++;
 		jailparam_init(&params[i], "ip6.addr");
 		jailparam_import(&params[i], ap_prison_config.ip);
 	}
 
 	/* Set security */
-	if(ap_prison_config.security > SEC_NONE) {
+	if(ap_prison_config.security > NONE) {
 		i++;
 		jailparam_init(&params[i], "securelevel");
 		jailparam_import(&params[i], "3");
@@ -411,11 +415,15 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 		i++;
 		jailparam_init(&params[i], "allow.sysvipc");
 		switch (ap_prison_config.security) {
-		case SEC_IPC:
+		case IPC:
 			jailparam_import(&params[i], "1");
 			break;
-		case SEC_NONE:
+		case SECURE:
 			jailparam_import(&params[i], "0");
+			break;
+		/* XXX: suppress stupid compiler warning */
+		case NONE:
+			break;
 		}
 	}
 	i++;	
@@ -430,9 +438,10 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 	}
 
 	/* cpuset */
-	if (ap_prison_config.cpu != NULL && cpuset_setaffinity(
+	if (ap_prison_config.cpuset != ALL && cpuset_setaffinity(
 	    		CPU_LEVEL_WHICH, CPU_WHICH_JAIL, cj->jid,
-			sizeof(ap_prison_config.cpu), ap_prison_config.cpu) != 0) {
+			sizeof(ap_prison_config.cpumask),
+			ap_prison_config.cpumask) != 0) {
 		rv = errno;
 		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, "cpuset faild");
 	}
