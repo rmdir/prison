@@ -23,7 +23,7 @@
 
 
 APXS?=		apxs
-FLAGS=		-ljail
+FLAGS=		-ljail -lutil
 
 .if defined(JAIL_PARANOID)
 FLAGS+=		-DJAIL_PARANOID

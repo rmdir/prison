@@ -58,12 +58,23 @@ You can write cpusets like with cpuset(1) :
 - a list of cpu. Eg 1,4,6
 - a cpu range. Eg 8-10 means 8,9,10
 
+5) JailMemory : total of memory usable within the jail.
+Args are : report deny
+- report : when jail uses this amount of memory an event is reported via devd
+- deny : the jail can't use more memory than that
+Both are expressed in expand_number(3) format (eg. : 512k, 32M, 15G ...). 
+Zero means infinite. rctl must be compiled on your kernel and vm.overcommit has 
+to be set to 1, otherwise httpd should be pushed in swap by deny (and swap usage
+won't be report).      
+
+
 EXAMPLE
 # grep Jail conf/httpd.conf
 JailDir /usr/local/httpd/htdocs
 JailIP ::1
 JailCPU 1
 JailSecurity IPC
+JailMemory 200M 256M
 # ./bin/httpd -T
 # jls jid name host.hostname ip4.addr ip6.addr path
 158 plop_rmdir_fr plop.rmdir.fr - ::1 /usr/local/httpd/htdoc
@@ -94,6 +105,9 @@ joris    httpd      56823 3  tcp4 6 *:8088                *:*
 joris    httpd      56823 4  tcp4   *:*                   *:*
 # cpuset -g -j 158
 jail 158 mask: 1
+# rctl -l process:56823
+jail:plop_rmdir_fr:memoryuse:deny=268435456
+jail:plop_rmdir_fr:memoryuse:devctl=209715200
 # curl -i http://www.rmdir.fr:8088/sysctl.cgi
 HTTP/1.1 200 OK
 Date: Wed, 10 Oct 2012 16:24:38 GMT
