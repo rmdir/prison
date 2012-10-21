@@ -211,17 +211,17 @@ kern.securelevel: 3
 
 BUGS AND STATUS
 
-This is work in progress. It and conflict with unixd ChrootDirectory.
+This is work in progress. It conflicts with unixd ChrootDirectory.
 
 The main problem in implementation is that jail is a kernel context which
-has to be set persistent before there is any process in it but not
-persistent, if you want it to die at the same time as httpd.
+has to be persistent before there is any process in it but not persistent 
+if you want it to die at the same time as httpd.
 
 Currently everything is set in post_config
-- create and setup the jail
+- create or update and setup the jail
 - fork a process that wait a few time before setting it non persistent.
 
-It sounds like a hack I really hesitate to make things much more complicate
+It sounds like a hack. I really hesitate to make things much more complicate
 with some IPC. The current implementation has around no overhead.
 
 SEE ALSO
