@@ -34,7 +34,9 @@
 #if defined(__FreeBSD_version) && (__FreeBSD_version >= 720000)
 
 #include <sys/cpuset.h>
+#ifdef _HAVE_RCTL_
 #include <sys/rctl.h>
+#endif /*_HAVE_RCTL_ */
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sys/jail.h>
@@ -241,6 +243,7 @@ ps_set_cpu_restrictions(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s)
 int 
 ps_set_memory_limits(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s)
 {
+#ifdef _HAVE_RCTL_
 	int i = 0;
 	size_t len;
 	char *rctlrule;
@@ -285,6 +288,7 @@ ps_set_memory_limits(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s)
 			return -1;
 		} 
 	}
+#endif /* _HAVE_RCTL_ */
 	return 0;
 }
 

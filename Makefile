@@ -1,7 +1,7 @@
 #   the used tools
 APXS?=apxs
 
-DEFS=-D_HAVE_LIBUTIL_H_ -DPARANOID
+DEFS=-D_HAVE_LIBUTIL_H_ -DPARANOID -D_HAVE_RCTL_
 LIBS=-L/usr/lib -lutil -L/usr/local/lib -ljail
 
 all: compile
