@@ -85,6 +85,12 @@ jail_set_persistant(void) {
 	return rv;
 }
 
+/* XXX: insecure */
+int
+ps_reuse_if_is_the_same(void) {
+	return jail_set_persistant();
+}
+
 /*
  * Gives a chance to the jail to have some processes attached and not to die
  * when setting nopersist.

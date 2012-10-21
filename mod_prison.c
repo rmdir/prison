@@ -288,7 +288,7 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 	if (geteuid()) {
     		rv = errno;
         	ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
-		    "Cannot jail when not started as root");
+		    "Cannot set the prison when not started as root");
         	return rv;
 	}
 	/* Let's go jailing */
@@ -316,21 +316,24 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 	}
 
 	/* 
-	 * Is there a jail having the same name . This can happen
-	 * on graceful restart or if there is a preexisting jail
+	 * Is there a prison having the same name . This can happen
+	 * on graceful restart. 
 	 */
 	if (ps_exists() == -1) {
 		rv = errno;
 		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
-		    "There is already a jail named %s.", cj->name);
-		return rv;
-	}
-
+		    "There is already a prison named %s.", cj->name);
+		if (ps_reuse_if_is_the_same() != 0) {
+			rv = errno;
+			ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
+		    		"Unable to reuse this prison");
+			return rv;
+		}
+	} 
 	
-	
-	if(ps_create(pconf, ptemp, s) != 0) {
+	else if (ps_create(pconf, ptemp, s) != 0) {
 		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
-				 "Unable to create the jail %s",
+				 "Unable to create the prison %s",
 				 s->server_hostname);
 		return rv;
 	}
@@ -338,7 +341,7 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 	/* 
 	 * At this point the prison is create and persistant so 
 	 * we need to run last_stuff if we don't want zombies 
-	 * jails in our system.
+	 * prisons in our system.
 	 */ 
 	rv = 0;
 	if(ps_set_security(pconf, ptemp, s) != 0) {
@@ -374,11 +377,11 @@ prison_drop_privileges(apr_pool_t *pool, server_rec *s)
 		rv = errno;
 		if (rv == EINVAL) {
 			ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL,
-		    		"Unexpected error ! invalid jid %ld", (long) cj->jid);
+		    		"Unexpected error ! invalid id %ld", (long) cj->jid);
 			return EINVAL;
 		}
 		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
-		    "Can't attach to jail %ld", (long) cj->jid);
+		    "Can't attach to prison %ld", (long) cj->jid);
 		return rv;
 	}
     	return OK;
@@ -398,15 +401,15 @@ prison_hooks(apr_pool_t *pool)
 
 static const command_rec prison_cmds[] = {
 	AP_INIT_TAKE1("PrisonDir", prison_set_path, NULL, RSRC_CONF, 
-                  "The directory to jail(2) into"),
+                  "The root directory of the prison"),
 	AP_INIT_TAKE1("PrisonIP", prison_set_ip, NULL, RSRC_CONF, 
-                  "The ip within the jail"),
+                  "The ip within the prison"),
 	AP_INIT_TAKE1("PrisonSecurity", prison_set_security, NULL, RSRC_CONF, 
-                  "System security within the jail (None, All, IPC)"),
+                  "System security within the prison (None, All, IPC)"),
 	AP_INIT_TAKE1("PrisonCPU", prison_set_cpu, NULL, RSRC_CONF, 
-                  "List of CPU the jail will be restrict on"),
+                  "List of CPU the prison will be restrict on"),
 	AP_INIT_TAKE2("PrisonMemory", prison_set_mem, NULL, RSRC_CONF, 
-                  "Maximum memory usage within the jail"),
+                  "Maximum memory usage within the prison"),
 	{NULL}
 };
 
