@@ -25,12 +25,10 @@
 
 #include "mod_prison.h"
 
-
 /* 
  * As FreeBSD's jailname doess  not support dots,
  * name is set to ServerName replacing dots with underscores
  */
-
 static int
 setup_prison_name(apr_pool_t *pconf, server_rec *s) {
 	size_t len;
@@ -157,7 +155,6 @@ prison_set_mem(cmd_parms *cmd, void *dummy, const char *report,
 	return NULL;
 }
 
-
 /* Check if PrisonDir is a valid directory */
 static const char * 
 prison_set_path(cmd_parms *cmd, void *dummy, const char *arg)
@@ -241,11 +238,9 @@ prison_set_security(cmd_parms *cmd, void *dummy, const char *arg)
 	return NULL;
 }
 
-
 /****************
  * Apache hooks *
  ****************/
-
 
 /* Setup default values */ 
 static int
@@ -273,7 +268,6 @@ prison_pre_config(apr_pool_t *pconf, apr_pool_t *plog,
 	ap_prison_config.memreport = 0;
 	return OK;
 }
-
 
 /* Create the prison */
 static int 
@@ -390,7 +384,6 @@ prison_drop_privileges(apr_pool_t *pool, server_rec *s)
     	return OK;
 }
 
-
 /*****************
  * Apache Magics *
  *****************/
@@ -398,32 +391,31 @@ prison_drop_privileges(apr_pool_t *pool, server_rec *s)
 static void 
 prison_hooks(apr_pool_t *pool)
 {
-    ap_hook_pre_config(prison_pre_config, NULL, NULL, APR_HOOK_MIDDLE);
-    ap_hook_drop_privileges(prison_drop_privileges, NULL, NULL, APR_HOOK_FIRST); 
-    ap_hook_post_config(prison_post_config, NULL, NULL, APR_HOOK_MIDDLE);
+	ap_hook_pre_config(prison_pre_config, NULL, NULL, APR_HOOK_MIDDLE);
+	ap_hook_drop_privileges(prison_drop_privileges, NULL, NULL, APR_HOOK_FIRST); 
+	ap_hook_post_config(prison_post_config, NULL, NULL, APR_HOOK_MIDDLE);
 }
 
 static const command_rec prison_cmds[] = {
-    AP_INIT_TAKE1("PrisonDir", prison_set_path, NULL, RSRC_CONF, 
+	AP_INIT_TAKE1("PrisonDir", prison_set_path, NULL, RSRC_CONF, 
                   "The directory to jail(2) into"),
-    AP_INIT_TAKE1("PrisonIP", prison_set_ip, NULL, RSRC_CONF, 
+	AP_INIT_TAKE1("PrisonIP", prison_set_ip, NULL, RSRC_CONF, 
                   "The ip within the jail"),
-    AP_INIT_TAKE1("PrisonSecurity", prison_set_security, NULL, RSRC_CONF, 
+	AP_INIT_TAKE1("PrisonSecurity", prison_set_security, NULL, RSRC_CONF, 
                   "System security within the jail (None, All, IPC)"),
-    AP_INIT_TAKE1("PrisonCPU", prison_set_cpu, NULL, RSRC_CONF, 
+	AP_INIT_TAKE1("PrisonCPU", prison_set_cpu, NULL, RSRC_CONF, 
                   "List of CPU the jail will be restrict on"),
-    AP_INIT_TAKE2("PrisonMemory", prison_set_mem, NULL, RSRC_CONF, 
+	AP_INIT_TAKE2("PrisonMemory", prison_set_mem, NULL, RSRC_CONF, 
                   "Maximum memory usage within the jail"),
-    {NULL}
+	{NULL}
 };
 
 AP_DECLARE_MODULE(prison) = {
-    STANDARD20_MODULE_STUFF,
-    NULL,
-    NULL,
-    NULL,
-    NULL,
-    prison_cmds,
-    prison_hooks
+	STANDARD20_MODULE_STUFF,
+	NULL,
+	NULL,
+	NULL,
+	NULL,
+	prison_cmds,
+	prison_hooks
 };
-

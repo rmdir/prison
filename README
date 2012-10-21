@@ -211,10 +211,10 @@ kern.securelevel: 3
 
 BUGS AND STATUS
 
-This is work in progress. It brakes graceful restart (httpd -k graceful)
+This is work in progress. It breaks graceful restart (httpd -k graceful)
 and conflict with unixd ChrootDirectory.
 
-The main problem in implementation is the jail is a kernel context which
+The main problem in implementation is that jail is a kernel context which
 has to be set persistent before there is any process in it but not
 persistent, if you want it to die at the same time as httpd.
 
