@@ -25,9 +25,6 @@
 
 #include "mod_prison.h"
 
-#include "apr_strings.h"
-#include "apr_portable.h"
-
 #if defined(__FreeBSD__)
 #include <osreldate.h>
 #else 
@@ -36,21 +33,14 @@
 
 #if defined(__FreeBSD_version) && (__FreeBSD_version >= 720000)
 
-#include <sys/param.h>
 #include <sys/cpuset.h>
 #include <sys/rctl.h>
-#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sys/jail.h>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
 
-#include <ctype.h>
 #include <jail.h>
-#include <libutil.h>
-#include <unistd.h>
 #include <pwd.h>
 
 
@@ -104,7 +94,7 @@ int
 ps_last_stuff(int rv)
 {
 	pid_t pid;
-	if (rv == 0) {
+	if (rv != 0) {
 		return jail_set_non_persistant();
 	}
 	switch (pid = fork()) {
