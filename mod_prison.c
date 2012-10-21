@@ -23,111 +23,40 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "ap_config.h"
-#include "httpd.h"
-#include "http_log.h"
-#include "http_core.h"
-#include "mpm_common.h"
+#include "mod_prison.h"
 
-#include "apr_strings.h"
-#include "apr_portable.h"
-
-#if defined(__FreeBSD__)
-#include <osreldate.h>
-#else 
-#error "Only for FreeBSD"
-#endif /* __FreeBSD__ */
-
-#if defined(__FreeBSD_version) && (__FreeBSD_version >= 720000)
-
-#include <sys/param.h>
-#include <sys/cpuset.h>
-#include <sys/rctl.h>
-#include <sys/stat.h>
-#include <sys/sysctl.h>
-#include <sys/types.h>
-#include <sys/jail.h>
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
-
-#include <ctype.h>
-#include <jail.h>
-#include <libutil.h>
-#include <unistd.h>
-#include <pwd.h>
-
-#else 
-#error "Only for FreeBSD > 7.2"
-
-#endif /* __FreeBSD_version */
-
-
-typedef enum { ALL, SET } cs_type;
-typedef enum { NONE, SECURE, IPC } sec_type;
-
-typedef struct {
-	char *path;
-	int ipversion;
-	char *ip;
-	sec_type security;
-	cs_type cpuset;
-	cpuset_t *cpumask;
-	uint64_t memreport;
-	uint64_t memdeny;
-} prison_config;
-
-typedef struct {
-	int jid;
-	char *name;
-} current_jail;
-
-#define WAIT_CHILD_TIMEOUT 10000
-
-prison_config ap_prison_config; 
-current_jail *cj;
 
 /* 
- * mod_prison functions :
- * httpd start and create, if JailDir is set, a persistant jail. 
- * It stores the jail id and name in cj global variable. 
- * Jail's name and hosname cames from ServerName, jail's IP is 
- * set or not in config. Security and ressources limits are also set in config.
- * The main problem is to make our persistant jail become not persistant as it
- * will die when httpd stop but persist on graceful restart.
+ * As FreeBSD's jailname doess  not support dots,
+ * name is set to ServerName replacing dots with underscores
  */
 
-
-/***********
- * HELPERS *
- ***********/
-
-static void
-_prison_launch_child_waiter(void)
-{
-	pid_t pid;
-	struct jailparam params[2];
-	switch (pid = fork()) {
-	case -1:
-		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
-		    "Can't fork child waiter");
-		break;
-	case 0:
-		apr_sleep(WAIT_CHILD_TIMEOUT);	
-
-		jailparam_init(&params[0], "name");
-		jailparam_import(&params[0], cj->name);
-		jailparam_init(&params[1], "nopersist");
-		jailparam_import(&params[1], NULL);
-
-		jailparam_set(params, 2, JAIL_UPDATE); 
-		jailparam_free(params, 2);
-		exit(0);
+static int
+setup_prison_name(apr_pool_t *pconf, server_rec *s) {
+	size_t len;
+	int i;
+	len = strlen(s->server_hostname) + 1;
+	cj->name = apr_palloc(pconf, len); 
+	if (cj->name == NULL) {
+		return errno;
 	}
+
+	/* jail name does not support dots */
+	for (i = 0; i < len ; i++) {
+		switch (s->server_hostname[i]) {
+		case '.': 
+				cj->name[i] = '_';
+				break;
+		default:
+				cj->name[i] = s->server_hostname[i];
+		}
+	}
+	return 0;
 }
 
+/* Construct cpumask from PrisonCPU directive */
 static const char *
-_prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
+prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
 {
 	char *end;
 	enum { OTHER, RANGE };
@@ -137,7 +66,6 @@ _prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
 	if (err != NULL) {
 		return err;
 	}
-	CPU_ZERO(ap_prison_config.cpumask);
 	while(*arg != '\0' && isdigit(*arg)) {
 		cpu = (int) strtol(arg, &end, 10);
 
@@ -145,17 +73,19 @@ _prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
 			ap_prison_config.cpuset = ALL;
 			return "CPU id can't be negative";
 		}
-		if (cpu > CPU_SETSIZE) {
+		if (cpu > MAXCPU) {
 			ap_prison_config.cpuset = ALL;
 			return "CPU id too hight";
 		}
 
 		switch (next) {
 		case OTHER:
-			CPU_SET(cpu, ap_prison_config.cpumask);
-			ap_prison_config.cpuset = SET;
-			previous = cpu;
-			previous++; num++;
+			if (num < MAXCPU) {
+				ap_prison_config.cpumask[num] = cpu;
+				ap_prison_config.cpuset = SET;
+				previous = cpu;
+				previous++; num++;
+			}
 			break;
 
 		case RANGE:
@@ -163,9 +93,11 @@ _prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
 				return "Invalid CPU range";
 			}
 			while (previous <= cpu) {
-				CPU_SET(cpu, ap_prison_config.cpumask);
-				ap_prison_config.cpuset = SET;
-				previous++; num++;
+				if (num < MAXCPU) {
+					ap_prison_config.cpumask[num] = cpu;
+					ap_prison_config.cpuset = SET;
+					previous++; num++;
+				}
 			}
 		}
 
@@ -192,63 +124,72 @@ _prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
 	}
 	if (num == 0) {
 		ap_prison_config.cpuset = ALL;
-		return "No CPU found in JailCPU";
+		return "PrisonCPU empty ?";
 	}
 	return NULL;
 }
 
+/* Parsing values for memorylimit */
 static const char *
-_prison_set_mem(cmd_parms *cmd, void *dummy, const char *report, 
+prison_set_mem(cmd_parms *cmd, void *dummy, const char *report, 
     const char *deny)
 {
 	char *usage;
+	uint64_t r = 0 , d = 0;
 	const char *err = ap_check_cmd_context(cmd, GLOBAL_ONLY);
 	if (err != NULL) {
 		return err;
 	}
-	usage = "JailMemory takes two arguments : report  deny" ;
+	usage = "PrisonMemory takes two arguments : report  deny";
 
-	if (expand_number(report, &ap_prison_config.memreport) == -1) {
+	if (expand_number(report, &r) == -1) {
 		return usage;
 	}	
-	if (expand_number(deny, &ap_prison_config.memdeny) == -1) {
+	if (expand_number(deny, &d) == -1) {
 		return usage;
 	}	
+	if (r != 0 && d != 0 && r > d) {
+	   return "PrisonMemory : report can't be higher than deny";
+	}
+       	ap_prison_config.memdeny = d;
+	ap_prison_config.memreport = r;	
 	return NULL;
 }
 
 
+/* Check if PrisonDir is a valid directory */
 static const char * 
-_prison_set_path(cmd_parms *cmd, void *dummy, const char *arg)
+prison_set_path(cmd_parms *cmd, void *dummy, const char *arg)
 {
-#ifdef JAIL_PARANOID
+#ifdef PARANOID
 	struct stat st;
-#endif /* JAIL_PARANOID */
+#endif /* PARANOID */
 
 	const char *err = ap_check_cmd_context(cmd, GLOBAL_ONLY);
 	if (err != NULL) {
     		return err;
 	}
 
-#ifdef JAIL_PARANOID
+#ifdef PARANOID
 	if (stat(arg, &st) == -1 || 
 	    (S_ISDIR(st.st_mode) == 0))
-    		return "JailDir must be a valid directory";
+    		return "PrisonDir must be a valid directory";
 	if (st.st_uid != 0 || (st.st_mode & (S_IWGRP|S_IWOTH)) != 0)
-		return "JailDir must be owned by root and not group "
+		return "PrisonDir must be owned by root and not group "
 		    "or world writable";
 #else 
 	if (!ap_is_directory(cmd->pool, arg)) {
-    		return "JailDir must be a valid directory";
+    		return "PrisonDir must be a valid directory";
 	}
-#endif /* JAIL_PARANOID */
+#endif /* PARANOID */
 
 	ap_prison_config.path = (char *) arg;
 	return NULL;
 }
 
+/* Check PrisonIP */
 static const char *
-_prison_set_ip(cmd_parms *cmd, void *dummy, const char *arg)
+prison_set_ip(cmd_parms *cmd, void *dummy, const char *arg)
 {
 	struct sockaddr_in sa;
 	struct sockaddr_in6 sa6;
@@ -265,19 +206,20 @@ _prison_set_ip(cmd_parms *cmd, void *dummy, const char *arg)
 		ap_prison_config.ip = (char *) arg;
 	}
 	else {
-		return "could not make sense of jail ip address";
+		return "Could not make sense of prison ip address";
 	}
 
-#ifdef JAIL_PARANOID
+#ifdef PARANOID
 	if (sa.sin_addr.s_addr == INADDR_ANY || sa6.sin6_addr.s6_addr == INADDR_ANY) {
-		return "Can't use INADDR_ANY for jail ip";
+		return "Can't use INADDR_ANY for prison ip";
 	}
-#endif /* JAIL_PARANOID */
+#endif /* PARANOID */
 	return NULL;
 }
 
+/* set security params */
 static const char *
-_prison_set_security(cmd_parms *cmd, void *dummy, const char *arg)
+prison_set_security(cmd_parms *cmd, void *dummy, const char *arg)
 {
 	const char *err = ap_check_cmd_context(cmd, GLOBAL_ONLY);
 	if (err != NULL) {
@@ -293,26 +235,38 @@ _prison_set_security(cmd_parms *cmd, void *dummy, const char *arg)
 		ap_prison_config.security = IPC;
 	}
 	else {
-		return "JailSecurity should be one of All, None or IPC";
+		return "PrisonSecurity should be one of All, None or IPC";
 	}
 	return NULL;
 }
 
 
-/*********
- * HOOKS *
- *********/
+/****************
+ * Apache hooks *
+ ****************/
 
 
-/* Sanitize config vars before child start */ 
+/* Setup default values */ 
 static int
 prison_pre_config(apr_pool_t *pconf, apr_pool_t *plog,
                  apr_pool_t *ptemp)
 {
+	int rv;
 	ap_prison_config.path = NULL;
 	ap_prison_config.ipversion = AF_UNSPEC;
+#ifdef PARANOID
 	ap_prison_config.security = SECURE;
-	ap_prison_config.cpumask = apr_pcalloc(pconf, sizeof(cpuset_t));
+#else
+	ap_prison_config.security = NONE;
+#endif
+	memset(&ap_prison_config.cpumask, 0, (size_t) MAXCPU);
+	rv = errno;
+	if (ap_prison_config.cpumask == NULL) {
+		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL,
+		    "Error in cpumask allocation");
+		return rv;
+	}
+
 	ap_prison_config.cpuset = ALL;
 	ap_prison_config.memdeny = 0;
 	ap_prison_config.memreport = 0;
@@ -320,30 +274,29 @@ prison_pre_config(apr_pool_t *pconf, apr_pool_t *plog,
 }
 
 
-/* Create a jail if needed or update it */
+/* Create the prison */
 static int 
 prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
     apr_pool_t *ptemp, server_rec *s)
 {
-	int i, rv;
-	size_t len;
-	struct jailparam params[14];
-	char *rctlrule;
+	int rv;
 
+	/* This function is called twice. Do nothing the first time */
 	if (ap_state_query(AP_SQ_MAIN_STATE) == AP_SQ_MS_CREATE_PRE_CONFIG)
 			return OK;
 
-	/* JailDir is not set. Nothing to do */
+	/* PrisonDir is not set. Nothing to do */
 	if (ap_prison_config.path == NULL) 
 		return OK;
 
-	/* Is jailing possible ? */
+	/* Some system calls need us to be root */
 	if (geteuid()) {
     		rv = errno;
         	ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
 		    "Cannot jail when not started as root");
         	return rv;
 	}
+	/* Let's go jailing */
 	if (chdir(ap_prison_config.path) != 0) {
     		rv = errno;
     		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
@@ -351,183 +304,67 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
         	return rv;
     	}
 
-	cj = apr_pcalloc(pconf, sizeof(current_jail));
+	cj = apr_palloc(pconf, sizeof(current_jail));
 	rv = errno;
 	if (cj == NULL) {
 		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
-		    "Error in cj structure allocation.");
+		    "Error in prison structure allocation.");
 		return rv;
 	}
 
-
-	len = strlen(s->server_hostname) + 1;
-	cj->name = apr_pcalloc(pconf, len); 
-	rv = errno;
-	if (cj->name == NULL) {
+	/* set cj->name */
+	rv = setup_prison_name(pconf, s);
+	if (rv != 0) {
 		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL,
-			     "Error in cj name allocation.");
+			     "Error in prison name consttruction.");
 		return rv;
 	}
-
-	/* jail name does not support dots */
-	for (i = 0; i < len ; i++) {
-		switch (s->server_hostname[i]) {
-		case '.': 
-				cj->name[i] = '_';
-				break;
-		default:
-				cj->name[i] = s->server_hostname[i];
-		}
-	}
-	cj->name[len] = '\0';
 
 	/* 
 	 * Is there a jail having the same name . This can happen
 	 * on graceful restart or if there is a preexisting jail
 	 */
-	if ((cj->jid = jail_getid(cj->name)) > 0) {
-		ap_log_error(APLOG_MARK, APLOG_ALERT, 0, NULL, 
+	if (ps_exists() == -1) {
+		rv = errno;
+		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
 		    "There is already a jail named %s.", cj->name);
-		return EEXIST;
+		return rv;
 	}
 
 	
-	/* Let's create a new jail */
-	i = 0;	
-	jailparam_init(&params[i], "name");
-	jailparam_import(&params[i], cj->name);
-	i++;
-	jailparam_init(&params[i], "host.hostname");
-	jailparam_import(&params[i],s->server_hostname);
-	i++;
-	jailparam_init(&params[i], "path");
-	jailparam_import(&params[i], ap_prison_config.path);
-	i++;
-	jailparam_init(&params[i], "persist");
-	jailparam_import(&params[i], NULL);
-	if (ap_prison_config.ipversion == AF_INET) {
-		i++;
-		jailparam_init(&params[i], "ip4.addr");
-		jailparam_import(&params[i], ap_prison_config.ip);
-	}
-	if (ap_prison_config.ipversion == AF_INET6) {
-		i++;
-		jailparam_init(&params[i], "ip6.addr");
-		jailparam_import(&params[i], ap_prison_config.ip);
-	}
-
-	/* Set security */
-	if(ap_prison_config.security > NONE) {
-		i++;
-		jailparam_init(&params[i], "securelevel");
-		jailparam_import(&params[i], "3");
-		i++;
-		jailparam_init(&params[i], "enforce_statfs");
-		jailparam_import(&params[i], "2");
-		i++;
-		jailparam_init(&params[i], "allow.set_hostname");
-		jailparam_import(&params[i], "0");
-		i++;
-		jailparam_init(&params[i], "allow.raw_sockets");
-		jailparam_import(&params[i], "0");
-		i++;
-		jailparam_init(&params[i], "allow.chflags");
-		jailparam_import(&params[i], "0");
-		i++;
-		jailparam_init(&params[i], "allow.mount");
-		jailparam_import(&params[i], "0");
-		i++;
-		jailparam_init(&params[i], "allow.quotas");
-		jailparam_import(&params[i], "0");
-		i++;
-		jailparam_init(&params[i], "allow.socket_af");
-		jailparam_import(&params[i], "0");
-		i++;
-		jailparam_init(&params[i], "allow.sysvipc");
-		switch (ap_prison_config.security) {
-		case IPC:
-			jailparam_import(&params[i], "1");
-			break;
-		case SECURE:
-			jailparam_import(&params[i], "0");
-			break;
-		/* XXX: suppress compiler warning */
-		case NONE:
-			break;
-		}
-	}
-	i++;	
-	cj->jid = jailparam_set(params, i, JAIL_CREATE);
-	rv = errno;
-	jailparam_free(params, i);
-	if (cj->jid == -1) {
-		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL,
+	
+	if(ps_create(pconf, ptemp, s) != 0) {
+		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
 				 "Unable to create the jail %s",
 				 s->server_hostname);
 		return rv;
 	}
 
+	/* 
+	 * At this point the prison is create and persistant so 
+	 * we need to run last_stuff if we don't want zombies 
+	 * jails in our system.
+	 */ 
+	rv = 0;
+	if(ps_set_security(pconf, ptemp, s) != 0) {
+		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL, 
+		    "set security failed");
+		rv = -1;
+	}
+
 	/* cpuset */
-	if (ap_prison_config.cpuset != ALL && cpuset_setaffinity(
-	    		CPU_LEVEL_WHICH, CPU_WHICH_JAIL, cj->jid,
-			sizeof(ap_prison_config.cpumask),
-			ap_prison_config.cpumask) != 0) {
-		rv = errno;
-		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, "cpuset faild");
+	if (ps_set_cpu_restrictions(pconf, ptemp, s) != 0) {
+		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL, "cpuset faild");
+		rv = -1;
 	}
 
 	/* set memory limit */
-	if (ap_prison_config.memdeny == 0 || ap_prison_config.memreport == 0) {
-	       goto end;	
-	}
-	i = 0;
-	len = sizeof(i);
-	if (sysctlbyname("vm.overcommit", &i, &len, NULL, 0) != 0) {
+	if (ps_set_memory_limits(pconf, ptemp, s) != 0) {
 		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL, 
-		    "Sysctl vm.overcommit fail");
-		goto end;
+		    		"Problem while setting memorylimit");
+		rv = -1;
 	}
-	if (i != 1) {
-		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
-		    "You have to set vm.overcommit to use memory limit");
-		goto end;
-	}
-	/* remove old rules */
-	rctlrule = apr_pstrcat(ptemp, "jail:",cj->name, NULL);
-	if (rctl_remove_rule(rctlrule, strlen(rctlrule) + 1, NULL, 0) != 0 &&
-	    errno != ESRCH) {
-		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
-		    "Error removing old rctl rules");
-		goto end;
-	}
-	if (ap_prison_config.memdeny != 0) {
-		rctlrule = apr_pstrcat(ptemp, "jail:",cj->name,
-		    ":memoryuse:deny=",
-		    apr_ltoa(ptemp, (long) ap_prison_config.memdeny), NULL);
-
-		if(rctl_add_rule(rctlrule, strlen(rctlrule) +1, NULL, 0) != 0) {
-			ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
-			    "Setting memory limit : rctl_add_rule(%s) failed",
-			    rctlrule);
-			goto end;
-		} 
-	}
-	if (ap_prison_config.memreport != 0) {
-		rctlrule = apr_pstrcat(ptemp, "jail:",cj->name,
-		    ":memoryuse:devctl=",
-		    apr_ltoa(ptemp, (long) ap_prison_config.memreport), NULL);
-
-		if(rctl_add_rule(rctlrule, strlen(rctlrule) +1, NULL, 0) != 0) {
-			ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
-			    "Setting memory limit : rctl_add_rule(%s) failed",
-			    rctlrule);
-			goto end;
-		} 
-	}
-
-end:
-	_prison_launch_child_waiter();
-	return OK;
+	return ps_last_stuff(rv);
 }
 
 static int        
@@ -538,14 +375,14 @@ prison_drop_privileges(apr_pool_t *pool, server_rec *s)
 	if (ap_prison_config.path == NULL)
 		return OK;
 
-	if (cj->jid <= 0) {
-		ap_log_error(APLOG_MARK, APLOG_ALERT, EINVAL, NULL,
-		    "Unexpected error ! invalid jid %ld", (long) cj->jid);
-		return EINVAL;
-	}	
-	if (jail_attach(cj->jid) == -1) {
+	if (ps_attach() == -1) {
 		rv = errno;
-		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL, 
+		if (rv == EINVAL) {
+			ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL,
+		    		"Unexpected error ! invalid jid %ld", (long) cj->jid);
+			return EINVAL;
+		}
+		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
 		    "Can't attach to jail %ld", (long) cj->jid);
 		return rv;
 	}
@@ -566,15 +403,15 @@ prison_hooks(apr_pool_t *pool)
 }
 
 static const command_rec prison_cmds[] = {
-    AP_INIT_TAKE1("JailDir", _prison_set_path, NULL, RSRC_CONF, 
+    AP_INIT_TAKE1("PrisonDir", prison_set_path, NULL, RSRC_CONF, 
                   "The directory to jail(2) into"),
-    AP_INIT_TAKE1("JailIP", _prison_set_ip, NULL, RSRC_CONF, 
+    AP_INIT_TAKE1("PrisonIP", prison_set_ip, NULL, RSRC_CONF, 
                   "The ip within the jail"),
-    AP_INIT_TAKE1("JailSecurity", _prison_set_security, NULL, RSRC_CONF, 
+    AP_INIT_TAKE1("PrisonSecurity", prison_set_security, NULL, RSRC_CONF, 
                   "System security within the jail (None, All, IPC)"),
-    AP_INIT_TAKE1("JailCPU", _prison_set_cpu, NULL, RSRC_CONF, 
+    AP_INIT_TAKE1("PrisonCPU", prison_set_cpu, NULL, RSRC_CONF, 
                   "List of CPU the jail will be restrict on"),
-    AP_INIT_TAKE2("JailMemory", _prison_set_mem, NULL, RSRC_CONF, 
+    AP_INIT_TAKE2("PrisonMemory", prison_set_mem, NULL, RSRC_CONF, 
                   "Maximum memory usage within the jail"),
     {NULL}
 };
