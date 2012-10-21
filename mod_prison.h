@@ -23,8 +23,8 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef _HAVE_MOD_PRISON_H_
-#define _HAVE_MOD_PRISON_H_
+#ifndef _MOD_PRISON_H_
+#define _MOD_PRISON_H_
 
 #include "ap_config.h"
 #include "httpd.h"
@@ -98,4 +98,4 @@ int ps_last_stuff(int rv);
 int ps_attach(void);
 int ps_exists(void);
 
-#endif /*_HAVE_MOD_PRISON_H_*/
+#endif /*_MOD_PRISON_H_*/
