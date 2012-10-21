@@ -1,108 +1,150 @@
-mod_prison : FreeBSD only module for Apache 2.4 http server (and maybe 2.2) 
+mod_prison : is an Apache httpd module that attempt to put httpd
+children in a very restrictive context :
 
-Unlike jail-patch, this module create an unique jail for all 
-Apache childs. Main process still unjailed like with mod_unixd 
-sothat you don't need anything except Documents inside the jail.
+- chroot with no need of shared libs
+- network restrictions
+- system calls restrictions
+- CPU stickiness and limitation
+- Memory usage limit
+
+Unlike mod_unixd restrictions (ChrootDir, RLimit), mod_prison create
+a global restricted context and attach each child in it.
+
+Currently mod_prison is a FreeBSD only stuff using jail, rctl and
+cpuset.
+
+DEPENDENCIES
+
+- FreeBSD version that supports libjail (> 7.2).
+check ldconfig -r | grep jail
+
+- rctl compiled into the kernel
+options RACCT
+options RCTL
+
+- Apache httpd-2.4 compiled with dso support (2.2 may work
+but is untested).
 
 INSTALL
 
-You need a FreeBSD version that supports libjail (> 7.2).
-ldconfig -r | grep jail
+Simply uses the Makefile : make && make install
 
-Then you can do 
+You can specify apxs path when building :
+make APXS=/usr/local/httpd/bin/apxs
 
-make install
-
-You can specify apxs PATH when building
-
-make APXS=/usr/local/httpd/bin/apxs install
-
-You can enforce security settings via setting JAIL_PARANOID
-
-make -DJAIL_PARANOID install
+By default PARANOID is set. You can remove it by editing the Makefile
 
 USAGE
 
-Now you can set in global config :
+1) PrisonDir : the directory we will be jailed on
 
-1) JailDir : the directory we will be jailed on
-DocumentRoot must be relative to this path so you must use httpd -T 
-to start Apache. If JAIL_PARANOID is set at compile time, JailDir must
+DocumentRoot must be relative to this path so you must use httpd -T
+to start Apache. If PARANOID is set at compile time, PrisonDir must
 be owned by root and not be world or group writable.
 
-2) JailIP : A single ipv4 or ipv6 string repersentation (default none).
-Apache still bind everything specified in Listen. JaiIP is just used for 
-script stuff like database connections. If JAIL_PARANOID is set you can't
-use INADDR_ANY (0.0.0.0).
+Eg:
+PrisonDir /usr/local/www
+DocumentRoot /sites
 
-3) JailSecurity : None|ALL|IPC
+2) PrisonIP : A single ipv4 or ipv6 string repersentation (default none).
+
+Apache still bind everything specified in Listen. PrisonIP is just used for
+script stuff like database connections, dns lookup...
+If PARANOID is set you can't use INADDR_ANY (0.0.0.0).
+
+Eg:
+PrisonIP 192.168.0.1
+PrisonIP ::1
+
+3) PrisonSecurity : None|ALL|IPC
 
 NONE : security settings are inherit from the system.
 
-ALL : 
-- securelevel : 3
-- enforce_statfs : 2
-- allow.set_hostname : 0
-- allow.raw_sockets : 0
-- allow.chflags : 0
-- allow.mount : 0
-- allow.quotas : 0
-- allow.socket_af : 0
-- allow.sysvipc : 0
+ALL : restrict system calls
 
-IPC : like all but allow.sysvipc is set.
+The idea is to restrict systems operations even if the attacker gains root
+privileges.
 
-4) JailCPU : the cpu set of the jail.
-You can write cpusets like with cpuset(1) :
-- a single cpu. Eg. 1
-- a list of cpu. Eg 1,4,6
-- a cpu range. Eg 8-10 means 8,9,10
+- disallow SysV IPC.
+- disallow row devices acces (/dev/io, /dev/mem, /dev/kmem, newfs).
+- disallow loding modules into the kernel.
+- reduce the possibility to have information about mountpoints.
+- disallow row sockets
+- disallow changing IP filter rules
+- disallow chflags
+- disallow mount and quota management
+- limit socket creation to IPv4, IPv6 and unix
 
-5) JailMemory : total of memory usable within the jail.
+IPC : like ALL but SysV IPC are allowed (useful for apc).
+
+The default is NONE (ALL if PARANOID is set).
+
+4) PrisonCPU : the CPU in which children will be execute.
+
+- a single cpu. Eg:
+PrisonCPU 1
+- a list of cpu. Eg:
+PrisonCPU 1,2,6
+- a cpu range. Eg
+PrisonCPU 8-10 # means 8,9 and 10
+
+5) PrisonMemory : total of memory usable within the jail.
+
 Args are : report deny
-- report : when jail uses this amount of memory an event is reported via devd
-- deny : the jail can't use more memory than that
-Both are expressed in expand_number(3) format (eg. : 512k, 32M, 15G ...). 
-Zero means infinite. rctl must be compiled on your kernel and vm.overcommit has 
-to be set to 1, otherwise httpd should be pushed in swap by deny (and swap usage
-won't be report).      
+Eg:
+PrisonMemory 900M 1G
+
+This means that when the total of all children memory usage will be of
+900MB an event will be reported (via devd on FreeBSD). When this total
+is 1GB further usage will be denied.
+
+Warning : usage is not allocation (look at the difference between SIZE
+and RES in a top command). This rule apply to the effective memory use.
+Allocation should be larger.
+
+Zero means infinite. Eg:
+PrisonMemory 512k 0 # Report at 512k. Never deny.
+
+On FreeBSD vm.overcommit has to be set to 1, otherwise the processes will
+be pushed in swap by deny.
 
 
 EXAMPLE
-# grep Jail conf/httpd.conf
-JailDir /usr/local/httpd/htdocs
-JailIP ::1
-JailCPU 1
-JailSecurity IPC
-JailMemory 200M 256M
+
+# grep Prison conf/httpd.conf
+PrisonDir /usr/local/httpd/htdocs
+PrisonIP ::1
+PrisonCPU 1
+PrisonSecurity IPC
+PrisonMemory 200M 256M
 # ./bin/httpd -T
 # jls jid name host.hostname ip4.addr ip6.addr path
 158 plop_rmdir_fr plop.rmdir.fr - ::1 /usr/local/httpd/htdoc
-# ps auxw -o jid | grep http 
-root    56821   0.0  0.2  33632 4380 ??  Ss    2:29PM     0:00.17 ./httpd -T         0
-root    56822   0.0  0.2  33632 4392 ??  S     2:29PM     0:00.22 ./httpd -T         0
-joris   56823   0.0  0.3  49380 5224 ??  SJ    2:29PM     0:00.61 ./httpd -T       158
-joris   56824   0.0  0.3  49380 5224 ??  SJ    2:29PM     0:00.60 ./httpd -T       158
-joris   56825   0.0  0.3  49380 5224 ??  SJ    2:29PM     0:00.62 ./httpd -T       158
-joris   56826   0.0  0.3  49380 5224 ??  SJ    2:29PM     0:00.70 ./httpd -T       158
-joris   56827   0.0  0.3  49380 5224 ??  SJ    2:29PM     0:00.67 ./httpd -T       158
-joris   56828   0.0  0.3  49380 5224 ??  SJ    2:29PM     0:00.70 ./httpd -T       158
-joris   63943   0.0  0.1  18456 1812  1  S+    5:27PM     0:00.00 grep http          0
+# ps auxw -o jid | grep http
+root 56821 0.0 0.2 33632 4380 ?? Ss 2:29PM 0:00.17 ./httpd -T 0
+root 56822 0.0 0.2 33632 4392 ?? S 2:29PM 0:00.22 ./httpd -T 0
+joris 56823 0.0 0.3 49380 5224 ?? SJ 2:29PM 0:00.61 ./httpd -T 158
+joris 56824 0.0 0.3 49380 5224 ?? SJ 2:29PM 0:00.60 ./httpd -T 158
+joris 56825 0.0 0.3 49380 5224 ?? SJ 2:29PM 0:00.62 ./httpd -T 158
+joris 56826 0.0 0.3 49380 5224 ?? SJ 2:29PM 0:00.70 ./httpd -T 158
+joris 56827 0.0 0.3 49380 5224 ?? SJ 2:29PM 0:00.67 ./httpd -T 158
+joris 56828 0.0 0.3 49380 5224 ?? SJ 2:29PM 0:00.70 ./httpd -T 158
+joris 63943 0.0 0.1 18456 1812 1 S+ 5:27PM 0:00.00 grep http 0
 # sockstat -j 158
 sockstat -j 158
-USER     COMMAND    PID   FD PROTO  LOCAL ADDRESS         FOREIGN ADDRESS      
-joris    httpd      56828 3  tcp4 6 *:8088                *:*
-joris    httpd      56828 4  tcp4   *:*                   *:*
-joris    httpd      56827 3  tcp4 6 *:8088                *:*
-joris    httpd      56827 4  tcp4   *:*                   *:*
-joris    httpd      56826 3  tcp4 6 *:8088                *:*
-joris    httpd      56826 4  tcp4   *:*                   *:*
-joris    httpd      56825 3  tcp4 6 *:8088                *:*
-joris    httpd      56825 4  tcp4   *:*                   *:*
-joris    httpd      56824 3  tcp4 6 *:8088                *:*
-joris    httpd      56824 4  tcp4   *:*                   *:*
-joris    httpd      56823 3  tcp4 6 *:8088                *:*
-joris    httpd      56823 4  tcp4   *:*                   *:*
+USER COMMAND PID FD PROTO LOCAL ADDRESS FOREIGN ADDRESS
+joris httpd 56828 3 tcp4 6 *:8088 *:*
+joris httpd 56828 4 tcp4 *:* *:*
+joris httpd 56827 3 tcp4 6 *:8088 *:*
+joris httpd 56827 4 tcp4 *:* *:*
+joris httpd 56826 3 tcp4 6 *:8088 *:*
+joris httpd 56826 4 tcp4 *:* *:*
+joris httpd 56825 3 tcp4 6 *:8088 *:*
+joris httpd 56825 4 tcp4 *:* *:*
+joris httpd 56824 3 tcp4 6 *:8088 *:*
+joris httpd 56824 4 tcp4 *:* *:*
+joris httpd 56823 3 tcp4 6 *:8088 *:*
+joris httpd 56823 4 tcp4 *:* *:*
 # cpuset -g -j 158
 jail 158 mask: 1
 # rctl -l process:56823
@@ -169,10 +211,22 @@ kern.securelevel: 3
 
 BUGS AND STATUS
 
-This is a really alpha software. It brakes graceful restart (httpd -k graceful)
+This is work in progress. It brakes graceful restart (httpd -k graceful)
 and conflict with unixd ChrootDirectory.
+
+The main problem in implementation is the jail is a kernel context which
+has to be set persistent before there is any process in it but not
+persistent, if you want it to die at the same time as httpd.
+
+Currently everything is set in post_config
+- create and setup the jail
+- fork a process that wait a few time before setting it non persistent.
+
+It sounds like a hack I really hesitate to make things much more complicate
+with some IPC. The current implementation has around no overhead.
 
 SEE ALSO
 
-http://code.google.com/p/mod-jail/
+mod-jail : http://code.google.com/p/mod-jail/
+	 
 
