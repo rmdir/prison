@@ -212,15 +212,19 @@ ps_set_security(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s) {
 int
 ps_set_cpu_restrictions(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s) 
 {
-	cpuset_t mask;
+	cpuset_t *mask;
 	int i;
 	if (ap_prison_config.cpuset != ALL) {
-		CPU_ZERO(&mask);
+		mask = apr_palloc(ptemp, sizeof(cpuset_t));
+		if (mask == NULL) {
+			return -1;
+		}
+		CPU_ZERO(mask);
 		for (i = 0; ap_prison_config.cpumask[i] != -1; i++) {
-			CPU_SET(ap_prison_config.cpumask[i], &mask);
+			CPU_SET(ap_prison_config.cpumask[i], mask);
 		}
 		if (cpuset_setaffinity( CPU_LEVEL_WHICH, CPU_WHICH_JAIL, cj->jid,
-			sizeof(mask), &mask) != 0) {
+			sizeof(mask), mask) != 0) {
 			return -1;
 		}
 	}

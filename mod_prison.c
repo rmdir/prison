@@ -126,6 +126,7 @@ prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
 		ap_prison_config.cpuset = ALL;
 		return "PrisonCPU empty ?";
 	}
+	ap_prison_config.cpumask[num] = -1;
 	return NULL;
 }
 
