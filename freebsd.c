@@ -205,14 +205,14 @@ ps_set_security(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s) {
 		case NONE:
 			break;
 		}
-	}
-	i++;	
-	cj->jid = jailparam_set(params, i, JAIL_UPDATE);
-	rv = errno;
-	jailparam_free(params, i);
-	if (cj->jid == -1) {
-		errno = rv;
-		return -1;
+		i++;	
+		cj->jid = jailparam_set(params, i, JAIL_UPDATE);
+		rv = errno;
+		jailparam_free(params, i);
+		if (cj->jid == -1) {
+			errno = rv;
+			return -1;
+		}
 	}
 	return 0;
 }
