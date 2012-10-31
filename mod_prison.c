@@ -128,6 +128,27 @@ prison_set_cpu(cmd_parms *cmd, void *dummy, const char *arg)
 	return NULL;
 }
 
+static const char *
+prison_set_options(cmd_parms *cmd, void *dummy, const char *option)
+{
+	const char *err = ap_check_cmd_context(cmd, GLOBAL_ONLY);
+	if (err != NULL) {
+		return err;
+	}
+	if (apr_strnatcasecmp("OneSite", option) == 0) {
+		ap_prison_config.onesite = ENABLE;
+	}
+	else if (apr_strnatcasecmp("OneListen", option) == 0) {
+		ap_prison_config.onelisten = ENABLE;
+	}
+	else {
+		return "Invalid PrisonOptions";
+	}
+	return NULL;
+}
+
+
+
 /* Parsing values for memorylimit */
 static const char *
 prison_set_mem(cmd_parms *cmd, void *dummy, const char *report, 
@@ -266,6 +287,8 @@ prison_pre_config(apr_pool_t *pconf, apr_pool_t *plog,
 	ap_prison_config.cpuset = ALL;
 	ap_prison_config.memdeny = 0;
 	ap_prison_config.memreport = 0;
+	ap_prison_config.onesite = DISABLE;
+	ap_prison_config.onelisten = DISABLE;
 	return OK;
 }
 
@@ -275,6 +298,23 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
     apr_pool_t *ptemp, server_rec *s)
 {
 	int rv;
+
+	/* Check the concordence of server_rec with options */
+	if (ap_prison_config.onesite == ENABLE && 
+	    s->next != NULL) {
+		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
+		    "Vhost detect while OneSite is set");
+		return EPERM;
+	}
+
+	if (ap_prison_config.onelisten == ENABLE && 
+	    s->addrs->host_addr->next != NULL) {
+		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
+		    "Multiple Listen detect while OneListen is set");
+		return EPERM;
+	}
+
+
 
 	/* This function is called twice. Do nothing the first time */
 	if (ap_state_query(AP_SQ_MAIN_STATE) == AP_SQ_MS_CREATE_PRE_CONFIG)
@@ -311,7 +351,7 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 	rv = setup_prison_name(pconf, s);
 	if (rv != 0) {
 		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL,
-			     "Error in prison name consttruction.");
+			     "Error in prison name construction.");
 		return rv;
 	}
 
@@ -410,6 +450,8 @@ static const command_rec prison_cmds[] = {
                   "List of CPU the prison will be restrict on"),
 	AP_INIT_TAKE2("PrisonMemory", prison_set_mem, NULL, RSRC_CONF, 
                   "Maximum memory usage within the prison"),
+	AP_INIT_ITERATE("PrisonOptions", prison_set_options, NULL, RSRC_CONF,
+	    	  "Various Prison Options : OneSite, OneListen"),
 	{NULL}
 };
 

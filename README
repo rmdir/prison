@@ -46,7 +46,7 @@ Eg:
 PrisonDir /usr/local/www
 DocumentRoot /sites
 
-2) PrisonIP : A single ipv4 or ipv6 string repersentation (default none).
+2) PrisonIP : A single ipv4 or ipv6 string representation (default none).
 
 Apache still bind everything specified in Listen. PrisonIP is just used for
 script stuff like database connections, dns lookup...
@@ -66,9 +66,9 @@ The idea is to restrict systems operations even if the attacker gains root
 privileges.
 
 - disallow SysV IPC.
-- disallow row devices acces (/dev/io, /dev/mem, /dev/kmem, newfs).
+- disallow row devices access (/dev/io, /dev/mem, /dev/kmem, newfs).
 - disallow loding modules into the kernel.
-- reduce the possibility to have information about mountpoints.
+- reduce the possibility to have information about mount-points.
 - disallow row sockets
 - disallow changing IP filter rules
 - disallow chflags
@@ -107,6 +107,26 @@ PrisonMemory 512k 0 # Report at 512k. Never deny.
 
 On FreeBSD vm.overcommit has to be set to 1, otherwise the processes will
 be pushed in swap by deny.
+
+6) PrisonOptions : various options.
+Currently OneSite and OneListen are implemented. OneSite deny VirtualHosts 
+in configuration. OneListen deny multiple listen statements.
+
+It's useful if you want your users to access quite whole config but not to change
+Listen statement or add some vhosts.
+
+SeverName plop.rmdir.fr
+Listen 127.0.0.1:8080
+#mpm config ...
+DocumentRoot /html
+PrisonPath /home/user/
+PrisonOptions OneSite OneListen
+
+# A listen or virtualhost in this file 
+# will makes configtest to fail
+
+Include /home/user/conf/apache.conf
+
 
 
 EXAMPLES
@@ -195,13 +215,13 @@ tmpfs on /usr/local/www/plop/tmp (tmpfs, local)
 $ curl http://www.rmdir.fr:8088/mount.cgi
 tank/plop on / (zfs, local, nfsv4acls)
 
-SYSTEM DATABASES
+SYSTEM DATABASES 
 
 With a basic NSS configuration, name resolution will work if there is a 
 route between PrisonIP and the resolver (take a particular care when 
 setting loopback IPs). /etc/hosts will no work. No resolv.conf is needed 
 inside the prison. As other system databases lookup, it will fail even 
-if the revelant file is accessible within the prison.
+if the relevant file is accessible within the prison.
 
 $ curl http://www.rmdir.fr:8088/id.cgi
 uid=1001 gid=1001 groups=1001
@@ -209,6 +229,11 @@ $ sudo mkdir /usr/local /usr/local/www/plop/etc
 $ sudo cp /etc/passwd /usr/local/www/plop/etc/
 $ curl http://www.rmdir.fr:8088/id.cgi
 uid=1001 gid=1001 groups=1001
+
+NETWORK
+
+Child process will access incomming requests and apache IPC. 
+They also will access what is routable through PrisonIP.
 
 BUGS AND STATUS
 

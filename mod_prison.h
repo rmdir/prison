@@ -63,6 +63,7 @@ extern int expand_number(const char *buf, uint64_t *num);
 
 typedef enum { ALL, SET } cs_type;
 typedef enum { NONE, SECURE, IPC } sec_type;
+typedef enum { DISABLE, ENABLE } opt_type;
 
 typedef struct {
 	char *path;
@@ -73,6 +74,8 @@ typedef struct {
 	int cpumask[MAXCPU];
 	uint64_t memreport;
 	uint64_t memdeny;
+	opt_type onesite;
+	opt_type onelisten;
 } prison_config;
 
 typedef struct {
