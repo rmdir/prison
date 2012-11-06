@@ -83,8 +83,6 @@ typedef struct {
 	char *name;
 } current_jail;
 
-#define WAIT_CHILD_TIMEOUT 10000
-
 prison_config ap_prison_config; 
 current_jail *cj;
 
