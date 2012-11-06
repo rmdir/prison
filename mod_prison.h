@@ -97,9 +97,8 @@ int ps_create(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s);
 int ps_set_security(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s);
 int ps_set_cpu_restrictions(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s); 
 int ps_set_memory_limits(apr_pool_t *pconf, apr_pool_t *ptemp, server_rec *s);
-int ps_last_stuff(int rv);
+int ps_start_control_daemon(int error, int reuse);
 int ps_attach(void);
 int ps_exists(void);
-int ps_reuse_if_is_the_same(void);
 
 #endif /*_MOD_PRISON_H_*/

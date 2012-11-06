@@ -297,7 +297,7 @@ static int
 prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
     apr_pool_t *ptemp, server_rec *s)
 {
-	int rv;
+	int rv, reuse;
 
 	/* Check the concordence of server_rec with options */
 	if (ap_prison_config.onesite == ENABLE && 
@@ -357,20 +357,14 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 
 	/* 
 	 * Is there a prison having the same name . This can happen
-	 * on graceful restart. 
+	 * on restart. 
 	 */
-	if (ps_exists() == -1) {
-		rv = errno;
-		ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
+	reuse = 0;
+	if (ps_exists() == 0) {
+		ap_log_error(APLOG_MARK, APLOG_ALERT, 0, NULL, 
 		    "There is already a prison named %s.", cj->name);
-		if (ps_reuse_if_is_the_same() != 0) {
-			rv = errno;
-			ap_log_error(APLOG_MARK, APLOG_ALERT, rv, NULL, 
-		    		"Unable to reuse this prison");
-			return rv;
-		}
+		reuse = 1;
 	} 
-	
 	else if (ps_create(pconf, ptemp, s) != 0) {
 		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
 				 "Unable to create the prison %s",
@@ -402,7 +396,8 @@ prison_post_config(apr_pool_t *pconf, apr_pool_t *plog,
 		    		"Problem while setting memorylimit");
 		rv = -1;
 	}
-	return ps_last_stuff(rv);
+
+	return ps_start_control_daemon(rv, reuse);
 }
 
 static int        

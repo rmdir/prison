@@ -45,14 +45,16 @@
 #include <jail.h>
 #include <pwd.h>
 
+#include <sys/event.h>
+#include <sys/time.h>
+
 
 /*******************
  * Various helpers *
  *******************/
-static int
+static void
 jail_set_non_persistant(void) {
 	struct jailparam params[2];
-	int rv = OK;
 
 	jailparam_init(&params[0], "name");
 	jailparam_import(&params[0], cj->name);
@@ -62,58 +64,118 @@ jail_set_non_persistant(void) {
 	if (jailparam_set(params, 2, JAIL_UPDATE) == -1) {
 	       ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
 	   	"Unexpected error while setting nopersist");
-	       rv = -1;
 	}	       
 	jailparam_free(params, 2);
-	return rv;
 }
 
-static int
-jail_set_persistant(void) {
-	struct jailparam params[2];
-	int rv = OK;
+static void 
+jail_do_daemon(pid_t parent) 
+{
+	int kq,i;
+	sigset_t set;
+	struct kevent ke;
+	openlog("mod_prison", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	syslog(LOG_INFO, "launching control daemon for jailed httpd : %s",
+	    cj->name);
+	syslog(LOG_DEBUG, "change proc title to : %s (control daemon)", 
+	    cj->name);
+	setproctitle("%s (control daemon)", cj->name);
 
-	jailparam_init(&params[0], "name");
-	jailparam_import(&params[0], cj->name);
-	jailparam_init(&params[1], "persist");
-	jailparam_import(&params[1], NULL);
+	syslog(LOG_DEBUG, "Handling signals");
+	if (sigfillset(&set) == -1) {
+		syslog(LOG_ERR, "sigfillset : %m");
+		goto emergency;
+	}
 
-	if (jailparam_set(params, 2, JAIL_UPDATE) == -1) {
-	       ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
-	   	"Unexpected error while setting nopersist");
-	       rv = -1;
-	}	       
-	jailparam_free(params, 2);
-	return rv;
+	if (sigprocmask(SIG_SETMASK, &set, NULL) == -1) {
+		syslog(LOG_ERR, "sigprocmask : %m");
+		goto emergency;
+	}
+
+       	syslog(LOG_DEBUG, "start to deal with kqueue");
+	kq = kqueue();
+	if (kq == -1) {
+		syslog(LOG_ERR, "kqueue : %m");
+		goto emergency;
+	}
+	EV_SET(&ke, parent,  EVFILT_PROC, EV_ADD, 
+	    NOTE_EXIT, 0, NULL);
+	i = kevent(kq, &ke, 1, NULL, 0, NULL);
+	if (i == -1) {
+		syslog(LOG_ERR, "kevent %m");
+		goto emergency;
+	}
+	syslog(LOG_DEBUG, "ok for kqueue stuff, let's become a daemon");
+	if (chdir("/var/empty") == -1) {
+		syslog(LOG_ERR, "chdir : %m");
+		goto emergency;
+	}
+	if (chroot("/var/empty") == -1) {
+		syslog(LOG_ERR, "chroot : %m");
+		goto emergency;
+	}
+	syslog(LOG_DEBUG, "starting main loop");
+	memset(&ke, 0, sizeof(struct kevent));
+	i = kevent(kq, NULL, 0, &ke, 1, NULL);
+	if (i == -1) {
+		syslog(LOG_ERR, "kevent : %m");
+		goto emergency;
+	}
+	if (ke.fflags & NOTE_EXIT) {
+		syslog(LOG_INFO, "pid %d exit (signal %d)",
+		(int) ke.ident , (int) WTERMSIG(ke.data)); 
+	} 
+	/* NOTREACHED */
+	else {
+		 syslog(LOG_ERR, "unexpected event (flag : %d)", (int) ke.fflags);
+	}
+
+end:
+	syslog(LOG_INFO, "control daemon is terminating");
+	jail_set_non_persistant();
+	syslog(LOG_DEBUG, "the jail was set unpersistant");
+	closelog();
+	exit(0);
+
+emergency:
+	syslog(LOG_ERR, "Emergency exiting I will kill my father");
+	kill(parent, SIGTERM);
+	goto end;
 }
-
-/* XXX: insecure */
-int
-ps_reuse_if_is_the_same(void) {
-	return jail_set_persistant();
-}
-
+			
 /*
  * Gives a chance to the jail to have some processes attached and not to die
  * when setting nopersist.
  * XXX: should be a better way with ipc
  */
 int
-ps_last_stuff(int rv)
+ps_start_control_daemon(int error, int reuse)
 {
-	pid_t pid;
-	if (rv != 0) {
-		return jail_set_non_persistant();
+	pid_t pid, parent;
+
+	if (error != 0) {
+		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
+		    "There was an error setting prison properties");
+		if (reuse != 0) {
+			ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
+			    "So we kill the prison");
+		}
+		jail_set_non_persistant();
+		return -1;
 	}
-	switch (pid = fork()) {
+	if (reuse != 0) {
+		return OK;
+	}
+
+	parent = getpid();
+	switch (pid = rfork(RFPROC|RFNOWAIT|RFCFDG)) {
 	case -1:
 		ap_log_error(APLOG_MARK, APLOG_ALERT, errno, NULL,
-		    "Can't fork child waiter");
-		break;
+		    "Can't fork control daemon");
+		jail_set_non_persistant();
+		return -1;
 	case 0:
-		apr_sleep(WAIT_CHILD_TIMEOUT);	
-		(void) jail_set_non_persistant();
-		exit(0);
+		jail_do_daemon(parent);
 	default :
 		return OK;
 	}
@@ -309,10 +371,9 @@ int
 ps_exists(void)
 {
 	if ((cj->jid = jail_getid(cj->name)) > 0) {
-		errno = EEXIST;
-		return -1;
+		return 0;
 	}
-	return 0;
+	return -1;
 }
 
 
