@@ -1,18 +1,25 @@
-#   the used tools
-APXS?=apxs
+APACHE=		/usr/local/httpd
+APXS=		${APACHE}/bin/apxs
 
-DEFS=-D_HAVE_LIBUTIL_H_ -DPARANOID -D_HAVE_RCTL_
+builddir=	.
+top_srcdir=	${APACHE}
+top_builddir=	${APACHE}
+top_mkdir!=	${APXS} -q installbuilddir
+
+include ${top_mkdir}/special.mk
+
+DEFS=		-D_HAVE_LIBUTIL_H_ 
+DEFS+=		-DPARANOID 
+DEFS+=		-D_HAVE_RCTL_
+
+
 LIBS=-L/usr/lib -lutil -L/usr/local/lib -ljail
 
-all: compile
-	
-compile:	
-	${APXS} -c mod_prison.c freebsd.c ${DEFS} ${LIBS}
+all: local-shared-build
 
-install: 
-	${APXS} -n prison -i mod_prison.la
+install: install-modules-yes
 
-#   cleanup
 clean:
-	-rm -fr *.o *.lo *.slo *.la .libs
+	-rm -f *.o *.lo *.slo *.la .libs
+
 
